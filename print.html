@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WebView Print Bridge Example</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 24px; }
+      .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; max-width: 560px; }
+      .status { margin: 12px 0; color: #444; }
+      .state { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: #f7f7f7; padding: 8px; border-radius: 6px; }
+      button { padding: 10px 14px; border: 0; border-radius: 6px; background: #0a66c2; color: #fff; cursor: pointer; margin-right: 8px; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      .muted { color: #666; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h2>Print Flow (WebView)</h2>
+      <div class="status" id="status">Waiting for print payload...</div>
+      <div class="muted" id="payloadInfo">No payload yet.</div>
+      <div style="margin: 12px 0;">
+        <button id="simulateBtn">Simulate Payload</button>
+        <button id="printBtn" disabled>Print</button>
+      </div>
+
+      <h3>Random State (should not change)</h3>
+      <div class="state" id="stateDump"></div>
+      <div class="muted" id="stateCheck"></div>
+    </div>
+
+    <script>
+      // Random state that should remain unchanged after printing.
+      const appState = Object.freeze({
+        bootTime: new Date().toISOString(),
+        sessionId: "sess-" + Math.random().toString(36).slice(2, 10),
+        seed: Math.floor(Math.random() * 1000000),
+        nonce: Math.random().toString(16).slice(2, 10)
+      });
+      const stateSnapshot = JSON.stringify(appState);
+      const stateFingerprint = btoa(stateSnapshot).slice(0, 16);
+
+      function renderState() {
+        document.getElementById("stateDump").textContent = stateSnapshot;
+        document.getElementById("stateCheck").textContent =
+          "State fingerprint: " + stateFingerprint + " (should stay constant)";
+      }
+      renderState();
+
+      // Dummy payload you can use to simulate incoming data.
+      const dummyPayload = {
+        documentId: "doc-123",
+        base64Pdf: "JVBERi0xLjQKJcTl8uXrp/Og0MTGCjEgMCBvYmoKPDwKL0xlbmd0aCAzPj4Kc3RyZWFtCkhlbGxvIFBERgo=",
+        documentType: "generic"
+      };
+
+      let printPayload = null;
+
+      function setStatus(text) {
+        document.getElementById("status").textContent = text;
+      }
+
+      function setPayload(payload) {
+        printPayload = payload;
+        setStatus("Payload received. Ready to print.");
+        document.getElementById("printBtn").disabled = false;
+        document.getElementById("payloadInfo").textContent =
+          "Payload: documentId=" + payload.documentId + ", base64 length=" + payload.base64Pdf.length;
+      }
+
+      // Listen for payload from external system.
+      window.addEventListener("message", (event) => {
+        const data = event && event.data;
+        if (!data || !data.base64Pdf) return;
+        setPayload(data);
+      });
+
+      // Simulate payload in-page.
+      document.getElementById("simulateBtn").addEventListener("click", () => {
+        window.postMessage(dummyPayload, "*");
+      });
+
+      // Print button -> send to native layer
+      document.getElementById("printBtn").addEventListener("click", () => {
+        if (!printPayload) return;
+
+        const message = {
+          type: "print",
+          printId: "print-" + Date.now(),
+          message: {
+            resources: [
+              { base64: printPayload.base64Pdf, documentType: printPayload.documentType }
+            ]
+          }
+        };
+
+        if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+          window.ReactNativeWebView.postMessage(JSON.stringify(message));
+        } else if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.nativePrint) {
+          window.webkit.messageHandlers.nativePrint.postMessage(message);
+        } else {
+          console.log("No native bridge available:", message);
+          alert("No native bridge available.");
+        }
+
+        // Verify state did not change after "printing"
+        const unchanged = btoa(JSON.stringify(appState)).slice(0, 16) === stateFingerprint;
+        setStatus(unchanged ? "Print triggered. State unchanged." : "Warning: State changed!");
+      });
+    </script>
+  </body>
+</html>
